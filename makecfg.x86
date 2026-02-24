@@ -1,0 +1,22 @@
+CROSS=
+ARCH=
+CHIPARCH=
+LIBC=glibc
+OSTYPE=linux
+QCSCHIP=0x86
+ARCH_DIR=$(CHIPARCH)
+EXTDRVVER=$(CHIPARCH)
+INTERDRVVER=$(CHIPARCH)
+
+SHARED_LIBS += -lgstreamer-1.0 -lgobject-2.0 -lglib-2.0
+IFLAGS+=-I./include
+CFLAGS+=$(shell pkg-config --cflags gstreamer-1.0) -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize=address -fno-sanitize=undefined -g
+
+#soc/platform
+#path related
+DFLAGS+=-DLOG_STORAGE_LOCATION=\"/tmp\"
+DFLAGS+=-DDBG_FILE_PATH=\"task-room-sample-log.txt\"
+DFLAGS+=-DCMD_SOCKET_PATH=\"/tmp/task-room-cmd.sock\"
+DFLAGS+=-DEVENT_SOCKET_PATH=\"/tmp/task-room-event.sock\"
+DFLAGS+=-DCONFIG_FILE_PATH=\"/tmp/rec.cfg\"
+
