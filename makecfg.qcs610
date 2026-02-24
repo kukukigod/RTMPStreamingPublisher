@@ -1,0 +1,23 @@
+CROSS=$(CROSS_COMIPLE)
+ARCH=arm
+CHIPARCH=qcs610
+LIBC=glibc
+OSTYPE=linux
+QCSCHIP=0x610
+
+STATIC_LIBS +=
+LFLAGS += -L$(SDKTARGETSYSROOT)/usr/lib/gstreamer-1.0
+SHARED_LIBS += -lgstreamer-1.0 -lglib-2.0 -lgobject-2.0
+CFLAGS+= -fstack-protector-strong -pie -fPIE -D_FORTIFY_SOURCE=2 -Wa,--noexecstack -Wformat -Wformat-security -Werror=format-security -O2 -fomit-frame-pointer    -Wa,--noexecstack -fexpensive-optimizations   -frename-registers -ftree-vectorize   -finline-functions -finline-limit=64   -Wno-error=maybe-uninitialized -Wno-error=unused-result  -D_REENTRANT -D_LARGEFILE64_SOURCE -Wno-error=maybe-uninitialized -Wno-unused-result -Wno-format-truncation -fno-sanitize=address -fno-sanitize=undefined
+IFLAGS+=$(INCLUDE) -I./include/
+DFLAGS+=-D_POSIX_PRIORITY_SCHEDULING -DQCSCHIP=$(QCSCHIP)
+
+#soc/platform
+DFLAGS+=-DSOC_TYPE=SOC_TYPE_QCS610
+
+#path related
+DFLAGS+=-DNOT_BE_ERASED_PATH=\"/tmp/\"
+DFLAGS+=-DLOG_STORAGE_LOCATION=\"/data/logger_storage/\"
+DFLAGS+=-DDBG_FILE_PATH=\"record-mgr-log.txt\"
+DFLAGS+=-DCONFIG_FILE_PATH=\"/data/config/rec.cfg\"
+
