@@ -2,6 +2,8 @@
 #include <gst/app/gstappsrc.h>
 #include <gst/app/gstappsink.h>
 #include <iostream>
+#include <chrono> 
+#include <ctime>
 #include "Logger.h"
 
 GstManager::GstManager(int width, int height, int fps, int videoBitrate,
@@ -66,12 +68,15 @@ void GstManager::startVideo() {
         "t_video. ! queue ! rtph264pay config-interval=1 pt=96 ssrc=" + std::to_string(videoSSRC_) +
         " mtu=1200 ! appsink name=rtpsink emit-signals=true sync=false";
 #else
-    // x86 Video (Fixed profile caps)
+    // x86 Video - Enabled textoverlay only for x86 benchmarking
     videoPipelineDesc =
-        "videotestsrc is-live=true pattern=ball ! video/x-raw,width=" + std::to_string(width_) + ",height=" + std::to_string(height_) +
-        ",framerate=" + std::to_string(fps_) + "/1,format=NV12 ! videoconvert ! "
+        "videotestsrc is-live=true pattern=ball do-timestamp=true ! "
+        "video/x-raw,width=" + std::to_string(width_) + ",height=" + std::to_string(height_) +
+        ",framerate=" + std::to_string(fps_) + "/1 ! "
+        "videoconvert ! "
+        "textoverlay name=time_overlay halignment=right valignment=bottom font-desc=\"Sans, 24\" ! "
+        "videoconvert ! queue ! video/x-raw,format=I420 ! "
         "x264enc tune=zerolatency key-int-max=30 speed-preset=ultrafast bitrate=" + std::to_string(videoBitrate_ / 1000) + " ! "
-        "video/x-h264,profile=baseline ! " 
         "h264parse config-interval=1 ! video/x-h264,stream-format=byte-stream,alignment=au ! tee name=t_video "
         "t_video. ! queue ! appsink name=h264sink emit-signals=true sync=false "
         "t_video. ! queue ! rtph264pay config-interval=1 pt=96 ssrc=" + std::to_string(videoSSRC_) +
@@ -86,6 +91,33 @@ void GstManager::startVideo() {
         if (error) g_error_free(error);
         return;
     }
+
+    // Benchmark injection: Only effective on x86 platform
+#if PLATFORM_NUM != 0x610
+    GstElement* overlay = gst_bin_get_by_name(GST_BIN(videoPipeline_), "time_overlay");
+    if (overlay) {
+        GstPad* pad = gst_element_get_static_pad(overlay, "video_sink");
+        // FIX: Return type must be GstPadProbeReturn
+        gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, [](GstPad* pad, GstPadProbeInfo* info, gpointer user_data) -> GstPadProbeReturn {
+            GstElement* overlay_el = GST_ELEMENT(user_data);
+            
+            auto now = std::chrono::system_clock::now();
+            auto time_t_now = std::chrono::system_clock::to_time_t(now);
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+            
+            struct tm buf_tm;
+            localtime_r(&time_t_now, &buf_tm);
+            
+            char final_str[128];
+            snprintf(final_str, sizeof(final_str), "%02d:%02d:%02d.%03ld", 
+                     buf_tm.tm_hour, buf_tm.tm_min, buf_tm.tm_sec, ms.count());
+            
+            g_object_set(overlay_el, "text", final_str, NULL);
+            
+            return GST_PAD_PROBE_OK;
+        }, overlay, (GDestroyNotify)gst_object_unref);
+    }
+#endif
 
     setupSink(videoPipeline_, "rtpsink", G_CALLBACK(onVideoRTPSample));
     setupSink(videoPipeline_, "h264sink", G_CALLBACK(onVideoAnnexBSample));
@@ -108,17 +140,16 @@ void GstManager::startAudio() {
     std::string audioPipelineDesc;
 
 #if PLATFORM_NUM == 0x610
-    // QCS610 Audio: Uses avenc_aac (standard in that environment)
+    // QCS610 Audio: Uses avenc_aac
     audioPipelineDesc =
         "pulsesrc provide-clock=false ! audio/x-raw,format=S16LE,rate=48000,channels=1 ! tee name=t_audio "
         "t_audio. ! queue ! opusenc ! rtpopuspay pt=111 ssrc=" + std::to_string(audioSSRC_) + 
         " ! appsink name=rtpsink emit-signals=true sync=false "
         "t_audio. ! queue ! audioconvert ! audioresample ! audio/x-raw,format=F32LE,rate=44100,channels=1 ! avenc_aac ! aacparse ! appsink name=aacsink emit-signals=true sync=false";
 #else
-    // x86 Audio: Replacing avenc_aac with voaacenc (based on your earlier logs)
-    // If voaacenc also fails, try 'fdkaacenc' or 'faac'
+    // x86 Audio: Optimized for voaacenc stability
     audioPipelineDesc =
-        "pulsesrc ! audio/x-raw,format=S16LE,rate=48000,channels=1 ! "
+        "pulsesrc ! queue ! audio/x-raw,format=S16LE,rate=48000,channels=1 ! "
         "audioconvert ! audioresample ! tee name=t_audio "
         "t_audio. ! queue ! opusenc ! rtpopuspay pt=111 ssrc=" + std::to_string(audioSSRC_) + 
         " ! appsink name=rtpsink emit-signals=true sync=false "
@@ -188,6 +219,7 @@ void GstManager::pushAudioFrame(const uint8_t* data, size_t size) {
     GstBuffer* buffer = gst_buffer_new_allocate(nullptr, size, nullptr);
     gst_buffer_fill(buffer, 0, data, size);
     
+    // Debug print for PTS/DTS
     GST_BUFFER_PTS(buffer) = gst_util_get_timestamp();
     GST_BUFFER_DTS(buffer) = GST_BUFFER_PTS(buffer);
 
@@ -196,7 +228,7 @@ void GstManager::pushAudioFrame(const uint8_t* data, size_t size) {
     gst_buffer_unref(buffer);
 }
 
-// ---------------- Callbacks (Identical to before) ----------------
+// ---------------- Callbacks ----------------
 GstFlowReturn GstManager::onVideoRTPSample(GstAppSink* appsink, gpointer user_data) {
     GstManager* self = static_cast<GstManager*>(user_data);
     GstSample* sample = gst_app_sink_pull_sample(appsink);
